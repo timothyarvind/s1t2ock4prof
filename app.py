@@ -38,6 +38,61 @@ def analyze_sentiment_vader(text):
     else:
         return "Neutral"
 
+# Function to get financial data
+@st.cache_data
+def get_financials(ticker):
+    try:
+        stock = yf.Ticker(ticker)
+        financials = stock.financials
+        return financials
+    except Exception as e:
+        st.error(f"Failed to retrieve data for ticker {ticker}: {e}")
+        return None
+
+# Function to calculate financial metrics for a list of tickers
+def calculate_financial_metrics(tickers, metrics):
+    financial_data = {ticker: pd.DataFrame() for ticker in tickers}
+    
+    for ticker in tickers:
+        financials = get_financials(ticker)
+        if financials is None:
+            continue
+        data = []
+        for year in financials.columns:
+            year_dt = pd.to_datetime(year).year
+            row = {'Year': year_dt}
+            for item in financials.index:
+                row[item] = financials.loc[item][year]
+            data.append(row)
+        financial_data[ticker] = pd.DataFrame(data)
+    
+    metric_data = pd.DataFrame(columns=['Year', 'Metric', 'Ticker', 'Value'])
+    
+    for ticker in tickers:
+        df = financial_data[ticker]
+        if df.empty:
+            continue
+        for metric in metrics:
+            for _, row in df.iterrows():
+                year = row['Year']
+                total_revenue = row.get('Total Revenue', None)
+                net_income = row.get('Net Income', None)
+                gross_profit = row.get('Gross Profit', None)
+                operating_income = row.get('Operating Income', None)
+                if pd.notnull(total_revenue):
+                    if metric == 'Gross Profit Margin' and pd.notnull(gross_profit):
+                        value = (gross_profit / total_revenue) * 100
+                    elif metric == 'Net Profit Margin' and pd.notnull(net_income):
+                        value = (net_income / total_revenue) * 100
+                    elif metric == 'Operating Margin' and pd.notnull(operating_income):
+                        value = (operating_income / total_revenue) * 100
+                    else:
+                        continue
+                    metric_data = pd.concat([metric_data, pd.DataFrame({'Year': [int(year)], 'Metric': [metric], 'Ticker': [ticker], 'Value': [value]})], ignore_index=True)
+    
+    metric_data['Year'] = metric_data['Year'].astype(str)
+    return metric_data
+
 # Streamlit app
 st.set_page_config(page_title="Stock Data Dashboard", page_icon="📊", layout="wide")
 
@@ -50,32 +105,26 @@ if page == "Financial Metrics Comparison":
     tickers_input = st.text_input('Enter comma-separated ticker symbols (e.g., AAPL, MSFT, GOOGL):')
     metrics = st.multiselect('Select financial metrics:', ['Gross Profit Margin', 'Net Profit Margin', 'Operating Margin'])
 
-    # Define custom color theme
     custom_colors = px.colors.qualitative.Vivid
 
     if tickers_input and metrics:
         tickers = [ticker.strip().upper() for ticker in tickers_input.split(',')]
         if tickers:
             with st.spinner(f'Calculating selected metrics...'):
-                # Calculate financial metrics function (already defined previously)
                 metric_data = calculate_financial_metrics(tickers, metrics)
                 if not metric_data.empty:
                     st.subheader('Financial Metrics Table')
                     st.dataframe(metric_data)
 
-                    # Prepare data for plotting
                     fig = px.bar(metric_data, x='Year', y='Value', color='Ticker', 
                                  facet_row='Metric', barmode='group', title='Financial Metrics by Year',
-                                 height=1000, facet_row_spacing=0.15, color_discrete_sequence=custom_colors)  # Custom color theme
+                                 height=1000, facet_row_spacing=0.15, color_discrete_sequence=custom_colors)
                     
-                    # Update y-axis titles for each subplot
                     for i, metric in enumerate(metrics):
                         fig.update_yaxes(title_text=metric, row=i+1, col=1)
 
-                    # Add values on top of the bars
                     fig.update_traces(texttemplate='%{y:.2f}%', textposition='outside')
 
-                    # Increase top margin to avoid cutting off the annotations
                     fig.update_layout(margin=dict(t=100))
 
                     st.subheader('Financial Metrics Chart')
@@ -102,7 +151,6 @@ elif page == "Sentiment Analysis":
                     st.subheader('News Articles')
                     st.dataframe(news_df)
 
-                    # Plotting sentiment
                     fig = px.histogram(news_df, x='Sentiment', color='Sentiment', 
                                        title=f'Sentiment Analysis for {query} News Articles')
                     st.plotly_chart(fig)
